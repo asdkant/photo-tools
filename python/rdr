@@ -88,8 +88,9 @@ ljustlen = max({len(i) for i in tsdict}) + 4
 print()
 print("files to be renamed:")
 for i in replacet_list: print(f"{i[0].ljust(ljustlen)} -> {i[1]}")
-print()
-print("files to be skipped (not valid images or image/xmp new filename already exists):")
+if len(skip_list):
+    print()
+    print("files to be skipped (not valid images or image/xmp new filename already exists):")
 for i in skip_list: print(i)
 
 # rename files, print which ones failed
