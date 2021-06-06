@@ -1,0 +1,109 @@
+#!/usr/bin/python
+import sys, pyexiv2, os, argparse, datetime
+
+"""
+Copyright 2021 by Ariel Kanterewicz <ariel@aknt.com.ar>
+All rights reserved.
+
+This file is released under the GNU General Public License version 3
+Please see the LICENSE file in the top level folder of this repository
+or the text at https://www.gnu.org/licenses/gpl-3.0.html
+"""
+
+
+desc = f"""Add timestamp to image files' filenames, talen from metadata.
+If there is an XMP sidecar with a corresponding image file in the list, 
+rename that one too with the corresponding image's timestamp.
+"""
+today = datetime.date.today().isoformat()
+now = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+
+parser = argparse.ArgumentParser(description=desc)
+parser.add_argument("-n", "--dry-run", help="print what would happen but don't rename files",
+                    action="store_true")
+parser.add_argument("-d", "--datestamp", 
+                    help=f"""use datestamp ("{today}") instead of full timestamp ("{now}")""",
+                    action="store_true")
+parser.add_argument("files", nargs="+",help="List of files to rename")
+args = parser.parse_args()
+realrun:bool = not args.dry_run
+files = args.files
+datestamp = args.datestamp
+
+
+def timestamp(f:str) -> str:
+    '''Take a filename, read its metadata and return timestamp if there is one'''
+    try:
+        md = pyexiv2.metadata.ImageMetadata(f)
+        md.read()
+        if datestamp:
+            return md.__getitem__('Exif.Photo.DateTimeOriginal').value.date().isoformat()
+        else:
+            return md.__getitem__('Exif.Photo.DateTimeOriginal').value.strftime("%Y-%m-%d-%H:%M:%S")
+    except:
+        return None
+
+# dictionary of filename:timestamp
+# the keys double as a set of valid image files
+tsdict = {f:t for f,t in [(f,timestamp(f)) for f in files] if t}
+
+def fexist(f):
+    '''take file name, check if file exists'''
+    return os.path.isfile(f)
+
+def renamet(f:str) -> str:
+    '''take filename, return rename touple (filename, timestamp_filename)'''
+    if f[-4:].lower() == '.xmp' and f[:-4] in tsdict and fexist(f):
+        # xmp file
+        return(f,f"{tsdict[f[:-4]]}_{f}")
+    elif f in tsdict:
+        # image file
+        return (f,f"{tsdict[f]}_{f}")
+
+# list of xmp files that exist and correspond to our valid image files
+valid_xmp_files = { f for r in tsdict for f in (r+'.xmp',r+'.XMP') if fexist(f) }
+# list image and xmp files that we will attempt to rename
+valid_files = set(tsdict).union(valid_xmp_files)
+
+# now we build the replace and skip list
+replacet_list = [] # list of (old_name,new_name) replace touples
+skip_list = [] # list of files we will skip
+for r in tsdict:
+    # image and existing sidecar files 
+    valids = [f for f in (r,r+'.xmp',r+'.XMP') if f in valid_files]
+    # rename touples for valids
+    valids_rt = [renamet(f) for f in valids]
+    # if any of the destination files exist then skip valids, else add them to replace list
+    if True in { fexist(i[1]) for i in valids_rt }:
+        skip_list.extend(valids)
+    else:
+        replacet_list.extend(valids_rt)
+
+# add invalid files passed by the user to the skip list
+skip_list.extend(list(set(files).difference(set(valid_files))))
+
+# calculate width for pretty-printing
+ljustlen = max({len(i) for i in tsdict}) + 4
+# pretty-print what we are going to do ("old_name -> new_name" with "->" all at the same place)
+print()
+print("files to be renamed:")
+for i in replacet_list: print(f"{i[0].ljust(ljustlen)} -> {i[1]}")
+print()
+print("files to be skipped (not valid images or image/xmp new filename already exists):")
+for i in skip_list: print(i)
+
+# rename files, print which ones failed
+fail_list = []
+if realrun:
+    for i in replacet_list:
+        try:
+            os.rename(i[0],i[1])
+        except:
+            fail_list.append(i[0])
+    print()
+    if len(fail_list):
+        print("There were issues with these files:")
+        for f in fail_list: print(f)
+    else:
+        print("Files renamed successfully.")
+print()
